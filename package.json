@@ -1,0 +1,23 @@
+{
+  "name": "@becklyn/contentful-migrations",
+  "version": "1.0.0",
+  "description": "",
+  "main": "./bin/migrate.js",
+  "bin": {
+    "becklyn-contentful-migrate": "./bin/migrate.js"
+  },
+  "engines": {
+    "node": ">=8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:Becklyn/contenful-migrations.git"
+  },
+  "author": "Marko S. Vujnovic",
+  "license": "MIT",
+  "dependencies": {
+    "contentful-cli": "^1.8.15",
+    "contentful-management": "^7.27.1",
+    "contentful-migration": "^4.2.3"
+  }
+}
