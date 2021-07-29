@@ -2,6 +2,50 @@
 
 const path = require("path");
 
+class Space {
+    constructor(spaceId, space) {
+        this.id = spaceId;
+        this._space = space;
+    }
+
+    async getEnvironment(environmentId)
+    {
+        return this._space.getEnvironment(environmentId);
+    }
+
+    async createEnvironmentWithId(environmentId) {
+        return this._space.createEnvironmentWithId(environmentId, {
+            name: environmentId,
+        });
+    }
+
+    async getApiKeys() {
+        return this._space.getApiKeys();
+    }
+
+    async getEnvironmentAlias(environmentInput) {
+        return this._space.getEnvironmentAlias(environmentInput);
+    }
+}
+
+class Environment {
+    constructor(environmentId, environmentConfig, environment, space) {
+        this.id = environmentId;
+        this.config = environmentConfig;
+        this._environment = environment;
+        this.space = space;
+    }
+
+    async getStatus() {
+        return (await this.space.getEnvironment(this.id)).sys.status.sys.id;
+    }
+
+    async getLocales() {
+        return this._environment.getLocales();
+    }
+}
+
+
 // utility fns
 const getVersionOfFile = (file) => file.replace(".js", "").replace(/_/g, ".");
 const getFileOfVersion = (version) => version.replace(/\./g, "_") + ".js";
@@ -9,26 +53,31 @@ const getFileOfVersion = (version) => version.replace(/\./g, "_") + ".js";
 (async () => {
         const {createClient} = require("contentful-management");
 
-        const [, , SPACE_ID, ENVIRONMENT_INPUT, CMA_ACCESS_TOKEN, MIGRATIONS_DIR_INPUT] = process.argv;
+        const [, , SPACE_ID, ENVIRONMENT_INPUT, CMA_ACCESS_TOKEN, MIGRATIONS_DIR_INPUT, CONFIG_FILE_INPUT] = process.argv;
         const MIGRATIONS_DIR = path.join(".", MIGRATIONS_DIR_INPUT ?? "migrations");
+        const CONFIG_FILE = path.join(".", CONFIG_FILE_INPUT ?? "contentful_migrations.json");
 
-        console.log(CMA_ACCESS_TOKEN, MIGRATIONS_DIR_INPUT, MIGRATIONS_DIR);
+        console.log(CMA_ACCESS_TOKEN, MIGRATIONS_DIR_INPUT, MIGRATIONS_DIR, CONFIG_FILE);
+
+        let environmentConfig;
+        try {
+            environmentConfig = loadConfig(CONFIG_FILE, ENVIRONMENT_INPUT);
+            console.log(environmentConfig);
+        } catch (e) {
+            return;
+        }
 
         const client = createClient({
             accessToken: CMA_ACCESS_TOKEN,
         });
-        const space = await client.getSpace(SPACE_ID);
+        const space = new Space(SPACE_ID, await client.getSpace(SPACE_ID));
 
         console.log("Running with the following configuration");
         console.log(`SPACE_ID: ${SPACE_ID}`);
 
-        const ENVIRONMENT_ID = calculateEnvironmentId(ENVIRONMENT_INPUT);
+        const environment = await prepareEnvironment(space, environmentConfig);
 
-        console.log(`ENVIRONMENT_ID: ${ENVIRONMENT_ID}`);
-
-        const environment = await prepareEnvironment(space, ENVIRONMENT_ID);
-
-        await updateApiKeys(space, ENVIRONMENT_ID);
+        await updateApiKeys(environment);
 
         const defaultLocale = await getDefaultLocale(environment);
 
@@ -37,19 +86,64 @@ const getFileOfVersion = (version) => version.replace(/\./g, "_") + ".js";
         const migrationsToExecute = await calculateMigrationsToExecute(environment, availableMigrations, defaultLocale);
 
         const migrationOptions = {
-            spaceId: SPACE_ID,
-            environmentId: ENVIRONMENT_ID,
+            spaceId: environment.space.id,
+            environmentId: environment.id,
             accessToken: CMA_ACCESS_TOKEN,
             yes: true,
         };
 
         await executeMigrations(environment, migrationsToExecute, defaultLocale, migrationOptions);
 
-        await updateAlias(space, ENVIRONMENT_INPUT, ENVIRONMENT_ID);
+        await updateAlias(environment);
 
         console.log('All done!');
 })();
 
+function loadConfig(configFile, environment)
+{
+    let configs;
+
+    try {
+        const fs = require("fs");
+        configs = JSON.parse(fs.readFileSync(configFile).toString());
+    } catch (e) {
+        console.log(`Configuration file ${configFile} not found, aborting`);
+        throw e;
+    }
+
+    // By default, "protected" environments are master, staging and integration. Default values for them are alias: true and persistent: false.
+    // This means the environment name is actually used by an alias, and actual environments are named as master_sometimestamp, for example.
+    // During the migration, a new copy of the currently aliased environment will be created, and the alias redirected to it if the migration succeeds.
+
+    // persistent: true means that fresh copies of the environment should not be created for the migrations and that they should be applied directly
+    // to the environment in question. If an environment is set to alias: true, the value of persistent is ignored because aliased environments can't be
+    // persistent.
+
+    // Default config values for non-protected environments are alias: false, persistent: false. That means the environment will always be deleted
+    // before migrations are executed and a fresh copy will be created from master. This is primarily intended for feature branches.
+
+    const isProtectedByDefault = environment => environment === "master" || environment === "staging" || environment === "integration";
+
+    let config = configs.environments.find(conf => conf.environment === environment);
+    if (!config) {
+        config = {
+            "environment": environment,
+            "alias": isProtectedByDefault(environment),
+            "persistent": false
+        }
+    } else {
+        // fill out all config properties if missing
+        if (!config.hasOwnProperty("alias")) {
+            // a missing alias property should only be set to true if the persistent property is false (or undefined) and the branch is protected
+            config.alias = !config.persistent && isProtectedByDefault(environment);
+        }
+        if (!config.hasOwnProperty("persistent")) {
+            config.persistent = false;
+        }
+    }
+
+    return config;
+}
 
 function getStringDate() {
     const d = new Date();
@@ -64,54 +158,91 @@ function getStringDate() {
     );
 }
 
-function calculateEnvironmentId(environmentInput) {
-    if (
-        environmentInput === 'master' ||
-        environmentInput === 'staging' ||
-        environmentInput === 'integration'
-    ) {
-        console.log(`Running on ${environmentInput}.`);
-        console.log(`Updating ${environmentInput} alias.`);
-        return `${environmentInput}-`.concat(getStringDate());
+function calculateEnvironmentId(environmentConfig) {
+    if (environmentConfig.alias) {
+        console.log(`Running on aliased environment ${environmentConfig.environment}.`);
+        const environmentId = `${environmentConfig.environment}-`.concat(getStringDate());
+        console.log(`Setting environment id to ${environmentId}`);
+        return environmentId;
     }
 
-    console.log('Running on feature branch');
-    return environmentInput;
+    if (environmentConfig.persistent) {
+        console.log(`Running on persistent environment ${environmentConfig.environment}.`);
+    } else {
+        console.log(`Running on feature branch ${environmentConfig.environment}.`);
+    }
+
+    return environmentConfig.environment;
 }
 
-async function prepareEnvironment(space, environment_id) {
+async function prepareEnvironment(space, environmentConfig) {
+    const environmentId = calculateEnvironmentId(environmentConfig);
+
     let environment;
 
-    // ---------------------------------------------------------------------------
-    console.log(`Checking for existing versions of environment: ${environment_id}`);
+    if (environmentConfig.alias) {
+        environment = await createAliasedEnvironment(space, environmentId);
+    } else if (environmentConfig.persistent) {
+        environment = await getOrCreatePersistentEnvironment(space, environmentId);
+    } else {
+        environment = await getOrCreateTransientEnvironment(space, environmentId);
+    }
 
+    environment = new Environment(environmentId, environmentConfig, environment, space);
+
+    await waitForEnvironmentWarmup(environment);
+
+    return environment;
+}
+
+async function createAliasedEnvironment(space, environmentId) {
     try {
-        environment = await space.getEnvironment(environment_id);
-        if (
-            environment_id !== 'master' &&
-            environment_id !== 'staging' &&
-            environment_id !== 'integration'
-        ) {
-            await environment.delete();
-            console.log('Environment deleted');
-        }
+        console.log(`Checking for existing version of aliased environment ${environmentId}`);
+        await space.getEnvironment(environmentId);
+    } catch (e) {
+        console.log('Not found, creating a new one');
+        return await space.createEnvironmentWithId(environmentId, {
+            name: environmentId,
+        });
+    }
+
+    console.log('Environment found, aborting');
+    throw new Error(`Existing verion of aliased environment ${environmentId} found, aborting`);
+}
+
+async function getOrCreatePersistentEnvironment(space, environmentId) {
+    try {
+        console.log(`Checking for existing version of persistent environment ${environmentId}`);
+        const environment = await space.getEnvironment(environmentId);
+
+        console.log('Environment found, using it');
+        return environment;
+    } catch (e) {
+        console.log('Environment not found, creating a new one');
+        return await space.createEnvironmentWithId(environmentId, {
+            name: environmentId,
+        });
+    }
+}
+
+async function getOrCreateTransientEnvironment(space, environmentId) {
+    try {
+        console.log(`Checking for existing version of transient environment ${environmentId}`);
+        let environment = await space.getEnvironment(environmentId);
+
+        console.log(`Existing environment found, deleting`);
+        await environment.delete();
     } catch (e) {
         console.log('Environment not found');
     }
 
-    // ---------------------------------------------------------------------------
-    if (
-        environment_id !== 'master' &&
-        environment_id !== 'staging' &&
-        environment_id !== 'integration'
-    ) {
-        console.log(`Creating environment ${environment_id}`);
-        environment = await space.createEnvironmentWithId(environment_id, {
-            name: environment_id,
-        });
-    }
+    console.log(`Creating a fresh copy`);
+    return await space.createEnvironmentWithId(environmentId, {
+        name: environmentId,
+    });
+}
 
-    // ---------------------------------------------------------------------------
+async function waitForEnvironmentWarmup(environment) {
     const DELAY = 3000;
     const MAX_NUMBER_OF_TRIES = 10;
     let count = 0;
@@ -119,12 +250,11 @@ async function prepareEnvironment(space, environment_id) {
     console.log('Waiting for environment processing...');
 
     while (count < MAX_NUMBER_OF_TRIES) {
-        const status = (await space.getEnvironment(environment.sys.id)).sys.status.sys
-            .id;
+        const status = await environment.getStatus();
 
         if (status === 'ready' || status === 'failed') {
             if (status === 'ready') {
-                console.log(`Successfully processed new environment (${environment_id})`);
+                console.log(`Successfully processed new environment ${environment.id}`);
 
                 return environment;
             } else {
@@ -140,17 +270,17 @@ async function prepareEnvironment(space, environment_id) {
     throw new Error('Environment preparation timed out');
 }
 
-async function updateApiKeys(space, environment_id) {
+async function updateApiKeys(environment) {
     console.log('Update API keys to allow access to new environment');
     const newEnv = {
         sys: {
             type: 'Link',
             linkType: 'Environment',
-            id: environment_id,
+            id: environment.id,
         },
     };
 
-    const { items: keys } = await space.getApiKeys();
+    const { items: keys } = await environment.space.getApiKeys();
     await Promise.all(
         keys.map((key) => {
             console.log(`Updating - ${key.sys.id}`);
@@ -184,7 +314,7 @@ async function getDefaultLocale(environment) {
 
 async function calculateMigrationsToExecute(environment, availableMigrations, defaultLocale) {
     console.log('Figure out migrations already executed in the contentful space');
-    const { items: versions } = await environment.getEntries({
+    const { items: versions } = await environment._environment.getEntries({
         content_type: 'migrationVersions',
     });
 
@@ -221,7 +351,7 @@ async function executeMigrations(environment, migrationsToExecute, defaultLocale
         );
         console.log(`${migrationToExecute} succeeded`);
 
-        const newVersionEntry = await environment.createEntry('migrationVersions', {
+        const newVersionEntry = await environment._environment.createEntry('migrationVersions', {
             fields: {
                 version: {
                     [defaultLocale]: migrationToExecute
@@ -237,26 +367,22 @@ async function executeMigrations(environment, migrationsToExecute, defaultLocale
     }
 }
 
-async function updateAlias(space, environment_input, environment_id) {
+async function updateAlias(environment) {
     console.log('Checking if we need to update an alias');
-    if (
-        environment_input === 'master' ||
-        environment_input === 'staging' ||
-        environment_input === 'integration'
-    ) {
-        console.log(`Running on ${environment_input}.`);
-        console.log(`Updating ${environment_input} alias.`);
-        await space
-            .getEnvironmentAlias(environment_input)
+    if (environment.config.alias) {
+        console.log(`Running on aliased environment ${environment.config.environment}.`);
+        console.log(`Updating alias to ${environment.id}.`);
+        await environment.space
+            .getEnvironmentAlias(environment.config.environment)
             .then((alias) => {
-                alias.environment.sys.id = environment_id;
+                alias.environment.sys.id = environment.id;
                 return alias.update();
             })
             .then((alias) => console.log(`alias ${alias.sys.id} updated.`))
             .catch(console.error);
-        console.log(`${environment_input} alias updated.`);
+        console.log(`${environment.config.environment} alias updated.`);
     } else {
-        console.log('Running on feature branch');
+        console.log('Running on feature or persistent branch');
         console.log('No alias changes required');
     }
 }
