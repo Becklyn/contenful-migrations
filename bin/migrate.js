@@ -34,7 +34,7 @@ const getFileOfVersion = (version) => version.replace(/\./g, "_") + ".js";
 
         const availableMigrations = await getAvailableMigrations(MIGRATIONS_DIR);
 
-        const migrationsToExecute = await calculateMigrationsToExecute(environment, availableMigrations);
+        const migrationsToExecute = await calculateMigrationsToExecute(environment, availableMigrations, defaultLocale);
 
         const migrationOptions = {
             spaceId: SPACE_ID,
@@ -182,7 +182,7 @@ async function getDefaultLocale(environment) {
     ).code;
 }
 
-async function calculateMigrationsToExecute(environment, availableMigrations) {
+async function calculateMigrationsToExecute(environment, availableMigrations, defaultLocale) {
     console.log('Figure out migrations already executed in the contentful space');
     const { items: versions } = await environment.getEntries({
         content_type: 'migrationVersions',
@@ -205,6 +205,7 @@ async function executeMigrations(environment, migrationsToExecute, defaultLocale
 
     const {default: runMigration} = require("contentful-migration/built/bin/cli");
 
+    let migrationToExecute;
     while ((migrationToExecute = migrationsToExecute.shift())) {
         const filePath = path.join(
             __dirname,
@@ -229,7 +230,7 @@ async function executeMigrations(environment, migrationsToExecute, defaultLocale
                     [defaultLocale]: new Date()
                 }
             }
-        });//.then(entry => entry.publish());
+        });
         await newVersionEntry.publish();
 
         console.log(`Saved ${migrationToExecute} to migrationVersions`);
