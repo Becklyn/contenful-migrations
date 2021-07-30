@@ -1,7 +1,8 @@
 {
   "name": "@becklyn/contentful-migrations",
-  "version": "0.0.1",
-  "description": "",
+  "version": "0.0.0",
+  "description": "A tool for executing content model migrations in Contentful",
+  "homepage": "https://github.com/Becklyn/contenful-migrations",
   "main": "./bin/migrate.js",
   "bin": {
     "becklyn-contentful-migrate": "./bin/migrate.js"
@@ -19,5 +20,8 @@
     "contentful-cli": "^1.8.15",
     "contentful-management": "^7.27.1",
     "contentful-migration": "^4.2.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
