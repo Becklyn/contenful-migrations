@@ -1,0 +1,20 @@
+/.DS_Store
+/.build
+/.github
+/.gitignore
+/.idea
+/.npmignore
+/.travis.yml
+/browserstack.json
+/kaba.js
+/node_modules
+/package-lock.json
+/sizereport.config.js
+/tests
+/tests-tsconfig.json
+/yarn.lock
+
+# ignore all .ts when publishing
+*.ts
+*.tsx
+!*.d.ts
