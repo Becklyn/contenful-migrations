@@ -13,7 +13,7 @@
     "type": "git",
     "url": "git@github.com:Becklyn/contenful-migrations.git"
   },
-  "author": "Marko S. Vujnovic",
+  "author": "Marko S. Vujnovic <mv@becklyn.com>",
   "license": "MIT",
   "dependencies": {
     "contentful-cli": "^1.8.15",

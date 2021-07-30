@@ -1,0 +1,18 @@
+{
+  "environments": [
+    {
+      "environment": "master",
+      "alias": true
+    },
+    {
+      "environment": "staging",
+      "alias": false,
+      "persistent": false
+    },
+    {
+      "environment": "integration",
+      "alias": false,
+      "persistent": false
+    }
+  ]
+}
