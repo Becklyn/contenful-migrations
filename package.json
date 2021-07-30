@@ -1,6 +1,6 @@
 {
   "name": "@becklyn/contentful-migrations",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A tool for executing content model migrations in Contentful",
   "homepage": "https://github.com/Becklyn/contenful-migrations",
   "main": "./bin/migrate.js",
